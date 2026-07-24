@@ -1,0 +1,119 @@
+{
+  "title": "Symulate - k6 Load & Performance Testing",
+  "uid": "symulate-k6",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Virtual Users (VUs)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"vus\" WHERE $timeFilter GROUP BY time($__interval) fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Request Rate (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "targets": [
+        {
+          "query": "SELECT count(\"value\") FROM \"http_reqs\" WHERE $timeFilter GROUP BY time($__interval) fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Error Rate (http_req_failed)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"http_req_failed\" WHERE $timeFilter GROUP BY time($__interval) fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Response Time by Endpoint (p95, ms) - grouped by real hit URL",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 7 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "description": "Grouped by the \"name\" tag, set to the actual endpoint/URL each scenario hit (see k6/lib/config.js ENDPOINTS / FRONTEND_ROUTES).",
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"http_req_duration\" WHERE $timeFilter GROUP BY time($__interval), \"name\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Hit URLs - Requests, Avg Duration, Failure Rate",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 15 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "description": "Every real URL/endpoint hit during the run (the \"name\"/\"url\" tags set in k6/scenarios/*.js), with request count and average duration per URL.",
+      "targets": [
+        {
+          "query": "SELECT count(\"value\") AS \"requests\", mean(\"value\") AS \"avg_ms\" FROM \"http_req_duration\" WHERE $timeFilter GROUP BY \"name\", \"url\"",
+          "rawQuery": true,
+          "resultFormat": "table"
+        }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }]
+    },
+    {
+      "id": 6,
+      "title": "Browser Scenario - Real-Page Load Time (p95, ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "description": "browser_http_req_duration from k6/scenarios/browser-login.js (headless Chromium), tagged per navigation URL automatically by the browser module.",
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"browser_http_req_duration\" WHERE $timeFilter GROUP BY time($__interval), \"url\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Checks - Pass vs Fail",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "influxdb", "uid": "k6-influxdb" },
+      "targets": [
+        {
+          "query": "SELECT count(\"value\") FROM \"checks\" WHERE $timeFilter AND \"value\" = 1 GROUP BY time($__interval) fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT count(\"value\") FROM \"checks\" WHERE $timeFilter AND \"value\" = 0 GROUP BY time($__interval) fill(0)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ]
+    }
+  ]
+}

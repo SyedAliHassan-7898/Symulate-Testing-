@@ -1,0 +1,75 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+
+    "types": [
+      "node",
+      "@playwright/test"
+    ],
+
+    "strict": true,
+
+    "resolveJsonModule": true,
+
+    "allowJs": false,
+
+    "esModuleInterop": true,
+
+    "skipLibCheck": true,
+
+    "forceConsistentCasingInFileNames": true,
+
+    "baseUrl": ".",
+
+    "paths": {
+      "@api": ["src/api"],
+      "@api/*": ["src/api/*"],
+
+      "@components": ["src/components"],
+      "@components/*": ["src/components/*"],
+
+      "@config": ["src/config"],
+      "@config/*": ["src/config/*"],
+
+      "@core": ["src/core"],
+      "@core/*": ["src/core/*"],
+
+      "@data": ["src/data"],
+      "@data/*": ["src/data/*"],
+
+      "@factories": ["src/data/factories"],
+      "@factories/*": ["src/data/factories/*"],
+
+      "@helpers": ["src/helpers"],
+      "@helpers/*": ["src/helpers/*"],
+
+      "@models": ["src/models"],
+      "@models/*": ["src/models/*"],
+
+      "@pages": ["src/pages"],
+      "@pages/*": ["src/pages/*"],
+
+      "@utils": ["src/utils"],
+      "@utils/*": ["src/utils/*"]
+    }
+  },
+
+  "include": [
+    "src",
+    "tests",
+    "playwright.config.ts"
+  ],
+
+  "exclude": [
+    "node_modules",
+    "test-results",
+    "reports"
+  ]
+}

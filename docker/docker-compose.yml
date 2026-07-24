@@ -1,0 +1,79 @@
+# Full local stack: Grafana + InfluxDB for live k6 dashboards, plus an
+# optional containerized test runner (Playwright + k6, headless) that runs
+# entirely inside Docker - useful if the host machine (e.g. low-RAM Windows)
+# struggles to run Chromium + k6 natively.
+#
+# Start monitoring only:      npm run grafana:up
+# Stop monitoring:            npm run grafana:down
+# Run the FULL suite in Docker (no native Node/Playwright/k6 needed):
+#                              npm run docker:test
+# Grafana UI:                 http://localhost:3000  (admin / admin)
+
+services:
+  influxdb:
+    image: influxdb:1.11
+    container_name: symulate-k6-influxdb
+    restart: unless-stopped
+    ports:
+      - '8086:8086'
+    environment:
+      INFLUXDB_DB: k6
+      INFLUXDB_HTTP_LOG_ENABLED: 'false'
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+    healthcheck:
+      # The influxdb image ships the `influx` CLI but NOT curl/wget, so probe
+      # readiness with the CLI (connects to localhost:8086 by default) instead.
+      test: ['CMD', 'influx', '-execute', 'SHOW DATABASES']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    container_name: symulate-k6-grafana
+    restart: unless-stopped
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: 'Viewer'
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+
+  # Runs the ENTIRE suite (Playwright, all specs, headless + full k6 suite)
+  # inside a container. Not started by `docker compose up` automatically -
+  # invoke explicitly with `npm run docker:test` (or `docker compose -f
+  # docker/docker-compose.yml run --rm runner`).
+  runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: symulate-test-runner
+    profiles: ['runner'] # excluded from a plain `docker compose up`
+    environment:
+      BASE_URL: ${BASE_URL}
+      API_URL: ${API_URL}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+      HEADLESS: 'true'
+      K6_BROWSER_HEADLESS: 'true'
+      INFLUXDB_URL: http://influxdb:8086
+    depends_on:
+      - influxdb
+      - grafana
+    volumes:
+      - ../reports:/app/reports
+      - ../test-results:/app/test-results
+      - ../k6/results:/app/k6/results
+
+volumes:
+  influxdb-data:
+  grafana-data:

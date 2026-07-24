@@ -1,0 +1,85 @@
+name: Full Test Suite (Deployment Gate)
+
+# Runs Playwright (ALL specs, headless) and the full k6 load/performance
+# suite SEPARATELY, on every push to main and on successful deployments.
+# Adjust the `on:` triggers to match your actual deployment pipeline.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  deployment_status:
+
+env:
+  BASE_URL: ${{ secrets.BASE_URL }}
+  API_URL: ${{ secrets.API_URL }}
+  SUPER_ADMIN_EMAIL: ${{ secrets.SUPER_ADMIN_EMAIL }}
+  SUPER_ADMIN_PASSWORD: ${{ secrets.SUPER_ADMIN_PASSWORD }}
+  HEADLESS: 'true'
+  K6_BROWSER_HEADLESS: 'true'
+
+jobs:
+  playwright:
+    name: Playwright - entire suite (headless)
+    if: github.event_name != 'deployment_status' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run entire Playwright suite
+        run: npm run test:all:full
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: reports/html
+          retention-days: 14
+
+  k6:
+    name: k6 - entire load & performance suite (headless browser)
+    if: github.event_name != 'deployment_status' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    # Deliberately NOT `needs: playwright` - the two suites are independent
+    # and run in parallel, per "run separately" requirement.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Install Chromium for k6 browser module
+        run: sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+
+      - name: Run entire k6 suite (smoke + load + headless-browser)
+        run: npm run k6:all
+
+      - name: Upload k6 results (CSV/log/summary/HTML report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: k6/results
+          retention-days: 14

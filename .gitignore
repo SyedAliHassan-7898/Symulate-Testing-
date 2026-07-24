@@ -1,0 +1,25 @@
+node_modules/
+
+playwright/.auth/
+
+reports/
+
+test-results/
+
+logs/
+
+.env.local
+
+coverage/
+
+dist/
+
+*.log
+
+.DS_Store
+
+.vscode/settings.json
+
+# Local editor backup snapshots. These are not project source files.
+.history/
+k6/results/
