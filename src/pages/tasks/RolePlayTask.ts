@@ -71,26 +71,43 @@ export class RolePlayTask extends TaskPage {
   }
 
   private async save(): Promise<void> {
-    await this.page
-      .getByRole("button", {
-        name: "Save & Finish",
-      })
-      .click();
+    const saveButton = this.page.getByRole("button", {
+      name: "Save & Finish",
+    });
+
+    // Modal/step transitions can leave the button attached but not yet
+    // interactive, which is what produced the earlier flaky visibility
+    // failures. Confirm it is on-screen and enabled before clicking.
+    await expect(saveButton).toBeVisible({ timeout: 15000 });
+    await saveButton.scrollIntoViewIfNeeded().catch(() => {});
+    await expect(saveButton).toBeEnabled({ timeout: 15000 });
+    await saveButton.click();
 
     await this.verifyCreated();
   }
 
   private async verifyCreated(): Promise<void> {
-    // Wait until save request completes
-    
-    await this.page.waitForLoadState("networkidle");
-    console.log("RolePlayTask: save request completed");  
-    // Wait until Create Task button appears again
-    await expect(
-      this.page.getByRole("button", {
-        name: "Create Task",
-      }),
-    ).toBeVisible({
+    // The save fires a network request, then the task wizard/modal closes and
+    // the list view (with "Create Task") comes back. Wait for the modal to
+    // actually detach first -- that is the real completion signal -- instead
+    // of racing the "Create Task" button while the modal is still animating.
+    const saveButton = this.page.getByRole("button", {
+      name: "Save & Finish",
+    });
+    await expect(saveButton).toBeHidden({ timeout: 30000 }).catch(() => {});
+
+    // Best-effort settle for the save request; networkidle can occasionally
+    // never fully quiesce, so don't let it throw here.
+    await this.page.waitForLoadState("networkidle").catch(() => {});
+    console.log("RolePlayTask: save request completed");
+
+    // Only now assert the list view is back. Scroll it into view before the
+    // visibility check so a below-the-fold button doesn't cause a false miss.
+    const createTaskButton = this.page.getByRole("button", {
+      name: "Create Task",
+    });
+    await createTaskButton.scrollIntoViewIfNeeded().catch(() => {});
+    await expect(createTaskButton).toBeVisible({
       timeout: 30000,
     });
   }

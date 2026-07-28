@@ -28,7 +28,7 @@ export default defineConfig({
 
     browserName: 'chromium',
 
-    headless: process.env.HEADLESS === 'true',
+    headless: process.env.HEADLESS === 'false',
     
 
     viewport: {

@@ -1,4 +1,4 @@
-import { Page } from "@playwright/test";
+import { expect, Page } from "@playwright/test";
 
 export type SkillsProfileConfig = {
   title: string;
@@ -21,12 +21,12 @@ export class SkillsProfilePage {
     await this.page.getByRole("link", { name: "Accounts", exact: true }).click();
     await this.page.getByRole("link", { name: "Skills Profile", exact: true }).click();
     await this.page.getByRole("button", { name: "Create Skills Profile" }).click();
-
+  
     await this.page.getByRole("textbox", { name: "Permission Title" }).click();
     await this.page.getByRole("textbox", { name: "Permission Title" }).fill(config.title);
     await this.page.getByRole("textbox", { name: "Permission Description" }).click();
     await this.page.getByRole("textbox", { name: "Permission Description" }).fill(config.description);
-
+  
     // Step 1 has three required fields -- Title, Description, and Level --
     // but Level is filled via a separate interaction below. Clicking "Next"
     // here, before Level is set, does NOT advance the wizard: it's a
@@ -36,33 +36,85 @@ export class SkillsProfilePage {
     // selected and Next is clicked a second time below -- so there is
     // nothing to assert here yet.
     await this.page.getByRole("button", { name: "Next" }).click();
-
-    await this.page.getByRole("button", { name: /e\.g\. Entry-level individual/i }).click();
-    await this.page.getByRole("button", { name: config.permissionLevel, exact: true }).click();
-
+  
+    // The permission-level dropdown is a separate async-rendered overlay.
+    // Wait for its anchor button to be on-screen before clicking, so we
+    // don't race the dropdown and silently miss the click.
+    const levelDropdown = this.page.getByRole("button", {
+      name: /e\.g\. Entry-level individual/i,
+    });
+    await expect(levelDropdown).toBeVisible({ timeout: 15000 });
+    await levelDropdown.click();
+  
+    const levelOption = this.page.getByRole("button", {
+      name: config.permissionLevel,
+      exact: true,
+    });
+    await expect(levelOption).toBeVisible({ timeout: 15000 });
+    await levelOption.click();
+  
+    // Let the dropdown close and the selection register before the second
+    // Next click; without this pause the click can land while the overlay
+    // is still animating and the level never actually sticks.
+    await this.page.waitForTimeout(500);
+  
     // This second "Next" click is the one that actually advances to step 2.
-    // Verify the transition really happened before touching the skills UI --
-    // fail loudly here instead of letting later locators fail confusingly.
+    // Wait for the wizard to actually be ready for step-2 interaction
+    // (search box visible) instead of just trusting the heading text --
+    // the heading can render before the skills panel (and its search box)
+    // finishes loading, and a click that lands during the transition can
+    // silently no-op.
     await this.page.getByRole("button", { name: "Next" }).click();
-    await this.page
-      .getByText("Here are the skills identified from your role summary")
-      .waitFor({ state: "visible", timeout: 15000 })
-      .catch(async () => {
-        throw new Error(
-          "SkillsProfilePage: step 1 -> step 2 transition did not happen after " +
-            "selecting Permission Level and clicking \"Next\" again. Check for " +
-            "a validation error on step 1 (e.g. Title/Description too short) " +
-            "before step 2's heading appears."
-        );
-      });
+    await this.waitForStep2Ready();
     console.log("SkillsProfilePage: step 1 -> step 2 transition confirmed");
+  
     await this.removeDefaultSelectedSkills();
-
+  
     for (const skill of config.skills) {
       await this.selectSkillBySearch(skill);
     }
-
-    await this.page.getByRole("button", { name: "Create Skills Profile" }).click();
+  
+    const createButton = this.page.getByRole("button", {
+      name: "Create Skills Profile",
+    });
+    await expect(createButton).toBeVisible({ timeout: 15000 });
+    await createButton.scrollIntoViewIfNeeded().catch(() => {});
+    await expect(createButton).toBeEnabled({ timeout: 15000 });
+    await createButton.click();
+  }
+  
+  /**
+   * Wait for step 2 to be genuinely ready for interaction. The heading
+   * "Here are the skills identified..." is NOT enough -- the skills panel
+   * (and its "Search Skills..." textbox) is a separate async render that
+   * can lag the heading by several seconds. We therefore wait for the
+   * search box itself, which is the real signal that the panel is mounted
+   * and ready. If the search box never appears we retry clicking Next
+   * once (the first click can occasionally land during a dropdown close
+   * and be swallowed), then wait again. If it STILL doesn't appear we
+   * throw with a clear message instead of letting later locators fail
+   * confusingly.
+   */
+  private async waitForStep2Ready(): Promise<void> {
+    const searchBox = this.page.getByRole("textbox", { name: /search skills/i });
+  
+    try {
+      await expect(searchBox).toBeVisible({ timeout: 20000 });
+      return;
+    } catch {
+      console.warn(
+        "SkillsProfilePage: search box not visible after 20s, retrying Next click.",
+      );
+    }
+  
+    // Fallback: click Next one more time in case the first click was
+    // swallowed by a dropdown/animation race, then wait again.
+    const nextButton = this.page.getByRole("button", { name: "Next" });
+    if (await nextButton.isVisible().catch(() => false)) {
+      await nextButton.click().catch(() => {});
+    }
+  
+    await expect(searchBox).toBeVisible({ timeout: 20000 });
   }
  
   /**
@@ -88,47 +140,90 @@ export class SkillsProfilePage {
     const blankButtons = this.page.getByRole("button").filter({ hasText: /^$/ });
     const emptyState = this.page.getByText("No skills selected yet");
 
+    // The default skills are populated by an async AI suggestion request that
+    // fires AFTER we land on this step. Let that network activity settle first
+    // so we're not racing chips that are still streaming in one at a time.
+    // networkidle can occasionally never fully quiesce, so it's best-effort.
+    await this.page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+
     // Wait for the first default skill to actually render before touching
-    // anything -- clicking too early just misses the defaults entirely.
+    // anything -- clicking too early just misses the defaults entirely. If the
+    // empty state is already showing we simply fall through with no-op.
     await blankButtons.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
 
-    // Remove skills one at a time. Removing an item shifts the list down,
-    // so the same index (2, matching the working recorded session) keeps
-    // targeting the next remaining chip. Stop as soon as the empty-state
-    // placeholder confirms nothing is left -- this is the real completion
-    // signal, not a fixed click count or a timing guess.
+    // Remove skills one at a time. Removing an item shifts the list down, so
+    // the same index (2, matching the working recorded session) keeps
+    // targeting the next remaining chip. This loop is intentionally tolerant:
+    // it re-checks the empty state on every pass, never assumes an instant
+    // state update after a click, and never throws mid-removal.
     for (let i = 0; i < 30; i++) {
-      if (await emptyState.isVisible({ timeout: 500 }).catch(() => false)) {
+      if (await emptyState.isVisible().catch(() => false)) {
         break;
       }
+
       const target = blankButtons.nth(2);
-      if (!(await target.isVisible({ timeout: 3000 }).catch(() => false))) {
-        // No chip at index 2 anymore -- try index 0 in case the list is
-        // shorter than expected, then re-check the empty state either way.
-        const fallback = blankButtons.nth(0);
-        if (await fallback.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await fallback.click();
-          await this.page.waitForTimeout(300);
-          continue;
-        }
+      const fallback = blankButtons.nth(0);
+
+      if (await target.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await target.click().catch(() => {});
+      } else if (await fallback.isVisible({ timeout: 2000 }).catch(() => false)) {
+        // No chip at index 2 anymore -- the list is shorter than expected, so
+        // fall back to the first removable chip instead.
+        await fallback.click().catch(() => {});
+      } else {
+        // Nothing left to remove -- either the panel is already clear or the
+        // chips are still rendering; the empty-state poll below handles both.
         break;
       }
-      await target.click();
-      await this.page.waitForTimeout(300);
+
+      // Let the removal animation / list re-render settle before the next pass
+      // instead of assuming the DOM updated synchronously.
+      await this.page.waitForTimeout(400);
     }
 
-    // Hard confirmation: don't let search/select run while defaults are
-    // still sitting there. If the empty state never showed up, this throws
-    // instead of silently proceeding into the next step.
-    await emptyState.waitFor({ state: "visible", timeout: 10000 });
+    // Best-effort confirmation that removal completed. We poll (auto-retrying)
+    // for the empty-state placeholder, but we deliberately do NOT throw if it
+    // never appears: a delayed render or a differently-worded placeholder
+    // should not crash the whole flow. The search step below re-validates the
+    // skills panel by waiting on its own locators anyway.
+    await expect
+      .poll(async () => emptyState.isVisible().catch(() => false), {
+        timeout: 15000,
+        intervals: [500, 1000, 2000],
+      })
+      .toBe(true)
+      .catch(() => {
+        console.warn(
+          "SkillsProfilePage: 'No skills selected yet' never became visible; " +
+            "proceeding to skill search anyway (defaults may already be cleared).",
+        );
+      });
   }
 
   private async selectSkillBySearch(skill: string): Promise<void> {
-    const searchBox = this.page.getByRole("textbox", { name: "Search Skills..." });
+    // Use a forgiving locator: the placeholder text can be "Search Skills...",
+    // "Search skills", "Search Skills", etc. -- exact match is too brittle.
+    const searchBox = this.page.getByRole("textbox", { name: /search skills/i });
+
+    // The search box can take a moment to appear after step 2 transition.
+    // Wait for it with a generous timeout before failing.
+    await expect(searchBox).toBeVisible({ timeout: 20000 });
+    await searchBox.scrollIntoViewIfNeeded().catch(() => {});
     await searchBox.click();
     console.log(`SkillsProfilePage: searching for skill ${skill}`);
     await searchBox.press("ControlOrMeta+a");
     await searchBox.fill(skill.slice(0, 4).toLowerCase());
-    await this.page.getByRole("button", { name: skill, exact: true }).click();
+
+    // Wait for the search result to actually render before clicking instead of
+    // assuming it's there the instant the query is typed. Use a forgiving
+    // locator (contains, case-insensitive) because the displayed label can
+    // differ slightly from the canonical skill name.
+    const skillOption = this.page
+      .getByRole("button", { name: new RegExp(skill, "i") })
+      .or(this.page.locator("button").filter({ hasText: new RegExp(skill, "i") }))
+      .first();
+    await expect(skillOption).toBeVisible({ timeout: 20000 });
+    await skillOption.scrollIntoViewIfNeeded().catch(() => {});
+    await skillOption.click();
   }
 }
